@@ -258,7 +258,11 @@ app.registerExtension({
             // FIX 6: Shows an error in frameDisplay and re-enables buttons
             //        if the POST fails so the node doesn't hang.
             // ----------------------------------------------------------------
-            this.confirmBtn = this.addWidget("button", "🚀 Confirm Cuts & Resume", null, async () => {
+            // NOTE: ComfyUI widget callbacks are invoked synchronously and the
+            // return value is discarded, so `async () => {}` silently drops the
+            // Promise and the fetch never runs. Use a plain function and chain
+            // .then()/.catch() so the POST actually fires.
+            this.confirmBtn = this.addWidget("button", "🚀 Confirm Cuts & Resume", null, () => {
                 if (this.totalFrames === 0 || this._confirmed) return;
 
                 // Lock UI immediately to prevent double-submit
@@ -268,18 +272,17 @@ app.registerExtension({
                 this.toggleBtn.disabled = true;
                 this.setDirtyCanvas(true, true);
 
-                try {
-                    await sendCutsToBackend(this.id, Array.from(this.droppedFrames));
-                } catch (e) {
-                    // FIX 6: Surface the error and re-enable the UI so the user can retry
-                    console.error("[FrameDeleter] Confirm failed:", e);
-                    this.frameDisplay.value = `⚠️ Error: ${e.message} — please retry`;
-                    this._confirmed = false;
-                    this.confirmBtn.name = "🚀 Confirm Cuts & Resume";
-                    this.confirmBtn.disabled = false;
-                    this.toggleBtn.disabled = false;
-                    this.setDirtyCanvas(true, true);
-                }
+                sendCutsToBackend(this.id, Array.from(this.droppedFrames))
+                    .catch((e) => {
+                        // Surface the error and re-enable the UI so the user can retry
+                        console.error("[FrameDeleter] Confirm failed:", e);
+                        this.frameDisplay.value = `⚠️ Error: ${e.message} — please retry`;
+                        this._confirmed = false;
+                        this.confirmBtn.name = "🚀 Confirm Cuts & Resume";
+                        this.confirmBtn.disabled = false;
+                        this.toggleBtn.disabled = false;
+                        this.setDirtyCanvas(true, true);
+                    });
             });
 
             // ----------------------------------------------------------------
