@@ -272,7 +272,9 @@ app.registerExtension({
                 this.toggleBtn.disabled = true;
                 this.setDirtyCanvas(true, true);
 
-                sendCutsToBackend(this.id, Array.from(this.droppedFrames))
+                // this.id is an integer in LiteGraph, but ComfyUI's UNIQUE_ID
+                // hidden input is always a string — coerce to match the dict key.
+                sendCutsToBackend(String(this.id), Array.from(this.droppedFrames))
                     .catch((e) => {
                         // Surface the error and re-enable the UI so the user can retry
                         console.error("[FrameDeleter] Confirm failed:", e);
