@@ -12,9 +12,10 @@ When a video batch reaches the FrameDeleter node, execution **pauses** and a ful
 
 ## Features
 
-- **Frame scrubber** — drag a slider to seek through the batch instantly
+- **Frame scrubber** — drag a slider to seek through the batch instantly; dropped frame positions are marked with red ticks on the track so you can see the distribution of your cuts at a glance
 - **Prev / Next buttons** — step through frames one at a time
 - **Drop / Restore toggle** — mark the current frame for deletion or undo it
+- **Preview mode** — toggle between editing and a live preview of the final cut result; the scrubber and Prev / Next remap to only the surviving frames so you can play through the output as it will appear
 - **Dropped-frames bubble list** — a scrollable panel shows all marked frames; click any bubble to jump straight to that frame
 - **Live preview** — the current frame is rendered inside the node, with a red ❌ overlay when it is marked for deletion
 - **Non-destructive** — nothing is modified until you click **Confirm Cuts & Resume**; cancelling the queue discards all selections and returns the original batch untouched
@@ -30,6 +31,7 @@ When a video batch reaches the FrameDeleter node, execution **pauses** and a ful
    git clone https://github.com/aw-leigh/frame-deleter
    ```
 
+
 2. Restart ComfyUI. The node will register automatically — no extra dependencies are required beyond a standard ComfyUI install.
 
 ---
@@ -41,7 +43,8 @@ When a video batch reaches the FrameDeleter node, execution **pauses** and a ful
 3. Connect the node's `IMAGE` output to the rest of your pipeline.
 4. Run the queue. When execution reaches FrameDeleter, it will pause and the UI will become active.
 5. Scrub or step through the frames and press **❌ Drop Frame** on any you want removed. Press it again on a marked frame to restore it.
-6. When you are happy with your selections, press **🚀 Confirm Cuts & Resume**. The node outputs the batch with the marked frames removed and execution continues.
+6. Optionally press **👁 Preview Cut Result** to enter preview mode. The scrubber and Prev / Next will remap to only the kept frames, letting you play through the result as it will look after the cut. Press **✏️ Back to Editing** to return to normal navigation.
+7. When you are happy with your selections, press **🚀 Confirm Cuts & Resume**. The node outputs the batch with the marked frames removed and execution continues.
 
 > **Tip:** If you mark every frame by mistake, the node will raise an error rather than silently passing the full batch through. Just re-run and keep at least one frame.
 
@@ -61,6 +64,8 @@ When a video batch reaches the FrameDeleter node, execution **pauses** and a ful
 ## How it works
 
 When execution reaches the node, the Python backend saves each frame as a temporary JPEG and sends their filenames to the frontend over ComfyUI's WebSocket. The node thread then waits on a `threading.Event`. The JavaScript extension receives the filenames, loads previews via the `/view` endpoint, and renders the interactive UI. When you confirm your selections, the frontend POSTs the list of frame indices to `/frame_deleter/confirm`, the backend wakes up, filters the tensor batch, and temporary files are cleaned up on a background thread. Stale temp files from any previous crashed session are also removed automatically on startup.
+
+Preview mode is implemented entirely in the frontend — the scrubber and navigation controls remap their 0→1 range onto an array of only the non-dropped frame indices, so no additional data is sent to or from the backend.
 
 ---
 
