@@ -37,7 +37,8 @@ app.registerExtension({
             this.previewImage = new Image();
             this.bubbleScrollY = 0;
             this.totalContentH = 0;
-            this._confirmed = false; // FIX 3: tracks whether confirm was clicked
+            this._confirmed = false;
+            this.previewMode = false; // when true, navigation skips dropped frames
 
             // ----------------------------------------------------------------
             // FIX 1: Accurate topY by summing actual widget heights
@@ -54,6 +55,16 @@ app.registerExtension({
             // resetUI — FIX 5: detach onload before swapping src so a
             // slow in-flight load can't fire after the reset.
             // ----------------------------------------------------------------
+            // Returns a sorted array of frame indices that are NOT dropped.
+            // Used by the scrubber remap and prev/next in preview mode.
+            this._getKeptFrames = () => {
+                const kept = [];
+                for (let i = 0; i < this.totalFrames; i++) {
+                    if (!this.droppedFrames.has(i)) kept.push(i);
+                }
+                return kept;
+            };
+
             this.resetUI = () => {
                 this.totalFrames = 0;
                 this.currentFrameIndex = 0;
@@ -61,17 +72,18 @@ app.registerExtension({
                 this.droppedFrames.clear();
                 this.bubbleScrollY = 0;
                 this._confirmed = false;
+                this.previewMode = false;
 
-                this.previewImage.onload = null; // detach first
+                this.previewImage.onload = null;
                 this.previewImage.src = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
-                this.previewImage.onload = () => this.setDirtyCanvas(true, true); // re-attach
+                this.previewImage.onload = () => this.setDirtyCanvas(true, true);
 
                 this.frameDisplay.value = "Waiting for execution...";
-
-                // FIX 3: Re-enable confirm & toggle buttons on reset
                 this.toggleBtn.disabled = false;
                 this.confirmBtn.disabled = false;
                 this.confirmBtn.name = "🚀 Confirm Cuts & Resume";
+                this.previewToggleBtn.name = "👁 Preview Cut Result";
+                this.previewToggleBtn.disabled = false;
 
                 this.setDirtyCanvas(true, true);
             };
@@ -82,8 +94,19 @@ app.registerExtension({
                 if (filename) {
                     this.previewImage.src = api.apiURL(`/view?filename=${encodeURIComponent(filename)}&type=temp`);
                 }
-                this.frameDisplay.value = `${this.currentFrameIndex} / ${this.totalFrames - 1}`;
-                this.toggleBtn.name = this.droppedFrames.has(this.currentFrameIndex) ? "✅ Restore Frame" : "❌ Drop Frame";
+
+                if (this.previewMode) {
+                    const kept = this._getKeptFrames();
+                    const keptPos = kept.indexOf(this.currentFrameIndex);
+                    this.frameDisplay.value = `${keptPos} / ${kept.length - 1}  (preview)`;
+                    // Drop/Restore doesn't make sense while previewing
+                    this.toggleBtn.disabled = true;
+                } else {
+                    this.frameDisplay.value = `${this.currentFrameIndex} / ${this.totalFrames - 1}`;
+                    this.toggleBtn.disabled = this._confirmed;
+                    this.toggleBtn.name = this.droppedFrames.has(this.currentFrameIndex) ? "✅ Restore Frame" : "❌ Drop Frame";
+                }
+
                 this.setDirtyCanvas(true, true);
             };
 
@@ -97,18 +120,55 @@ app.registerExtension({
                 type: "mx_scrubber",
                 draw: (ctx, node, w, y, h) => {
                     const margin = 15, sliderW = w - margin * 2;
-                    const progress = this.totalFrames > 1 ? this.currentFrameIndex / (this.totalFrames - 1) : 0;
+                    const trackY = y + h * 0.4, trackH = 6;
+
                     ctx.save();
-                    ctx.fillStyle = "#0a0a0a"; ctx.beginPath(); ctx.roundRect(margin, y + h * 0.4, sliderW, 6, 3); ctx.fill();
-                    ctx.fillStyle = "#EEE"; ctx.beginPath();
-                    ctx.arc(margin + (sliderW * progress), y + h * 0.4 + 3, 10, 0, Math.PI * 2); ctx.fill();
+
+                    // Track background
+                    ctx.fillStyle = "#0a0a0a";
+                    ctx.beginPath(); ctx.roundRect(margin, trackY, sliderW, trackH, 3); ctx.fill();
+
+                    if (!this.previewMode && this.totalFrames > 1) {
+                        // In normal mode: draw a red tick for every dropped frame
+                        ctx.fillStyle = "rgba(220,50,50,0.85)";
+                        for (const f of this.droppedFrames) {
+                            const tx = margin + (f / (this.totalFrames - 1)) * sliderW;
+                            ctx.fillRect(tx - 1, trackY, 2, trackH);
+                        }
+                    }
+
+                    // Thumb position
+                    let progress = 0;
+                    if (this.previewMode) {
+                        const kept = this._getKeptFrames();
+                        const keptPos = kept.indexOf(this.currentFrameIndex);
+                        progress = kept.length > 1 ? keptPos / (kept.length - 1) : 0;
+                    } else {
+                        progress = this.totalFrames > 1 ? this.currentFrameIndex / (this.totalFrames - 1) : 0;
+                    }
+
+                    ctx.fillStyle = "#EEE";
+                    ctx.beginPath();
+                    ctx.arc(margin + sliderW * progress, trackY + trackH / 2, 10, 0, Math.PI * 2);
+                    ctx.fill();
+
                     ctx.restore();
                 },
                 mouse: (event, pos) => {
                     if (event.buttons !== 1 || this.totalFrames === 0) return false;
                     const margin = 15, sliderW = this.size[0] - margin * 2;
                     const x = Math.max(0, Math.min(1, (pos[0] - margin) / sliderW));
-                    this.currentFrameIndex = Math.round(x * (this.totalFrames - 1));
+
+                    if (this.previewMode) {
+                        // Remap 0→1 onto the kept-frames array
+                        const kept = this._getKeptFrames();
+                        if (kept.length === 0) return false;
+                        const keptIdx = Math.round(x * (kept.length - 1));
+                        this.currentFrameIndex = kept[keptIdx];
+                    } else {
+                        this.currentFrameIndex = Math.round(x * (this.totalFrames - 1));
+                    }
+
                     this.updateUI();
                     return true;
                 },
@@ -132,11 +192,26 @@ app.registerExtension({
                 mouse: (event, pos) => {
                     if ((event.type !== "pointerdown" && event.type !== "mousedown") || this.totalFrames === 0) return false;
                     const m = 15, s = 10, bw = (this.size[0] - m * 2 - s) / 2;
-                    if (pos[0] >= m && pos[0] <= m + bw)
-                        this.currentFrameIndex = Math.max(0, this.currentFrameIndex - 1);
-                    else if (pos[0] >= m + bw + s && pos[0] <= this.size[0] - m)
-                        this.currentFrameIndex = Math.min(this.totalFrames - 1, this.currentFrameIndex + 1);
-                    else return false;
+                    const goingPrev = pos[0] >= m && pos[0] <= m + bw;
+                    const goingNext = pos[0] >= m + bw + s && pos[0] <= this.size[0] - m;
+                    if (!goingPrev && !goingNext) return false;
+
+                    if (this.previewMode) {
+                        // Step through kept frames only
+                        const kept = this._getKeptFrames();
+                        if (kept.length === 0) return false;
+                        const keptPos = kept.indexOf(this.currentFrameIndex);
+                        if (goingPrev)
+                            this.currentFrameIndex = kept[Math.max(0, keptPos - 1)];
+                        else
+                            this.currentFrameIndex = kept[Math.min(kept.length - 1, keptPos + 1)];
+                    } else {
+                        if (goingPrev)
+                            this.currentFrameIndex = Math.max(0, this.currentFrameIndex - 1);
+                        else
+                            this.currentFrameIndex = Math.min(this.totalFrames - 1, this.currentFrameIndex + 1);
+                    }
+
                     this.updateUI();
                     return true;
                 },
@@ -150,6 +225,30 @@ app.registerExtension({
                     this.droppedFrames.delete(this.currentFrameIndex);
                 else
                     this.droppedFrames.add(this.currentFrameIndex);
+                this.updateUI();
+            });
+
+            // ----------------------------------------------------------------
+            // Preview mode toggle — remaps scrubber and prev/next to skip
+            // dropped frames so you can play through the final cut result.
+            // Disabled when there are no dropped frames or none kept.
+            // ----------------------------------------------------------------
+            this.previewToggleBtn = this.addWidget("button", "👁 Preview Cut Result", null, () => {
+                if (this.totalFrames === 0) return;
+                const kept = this._getKeptFrames();
+                // Don't enter preview mode if there's nothing useful to show
+                if (kept.length === 0) return;
+
+                this.previewMode = !this.previewMode;
+                this.previewToggleBtn.name = this.previewMode ? "✏️ Back to Editing" : "👁 Preview Cut Result";
+
+                if (this.previewMode) {
+                    // If the current frame is dropped, jump to the first kept frame
+                    if (this.droppedFrames.has(this.currentFrameIndex)) {
+                        this.currentFrameIndex = kept[0];
+                    }
+                }
+
                 this.updateUI();
             });
 
